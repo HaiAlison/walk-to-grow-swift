@@ -73,19 +73,6 @@ extension GameScene{
 extension GameScene{
 
 
-    // fences.png is treated as 8 columns x 10 rows (index 1...80 from top-left to bottom-right).
-    private enum FenceSheet {
-        static let cols = 8
-        static let rows = 10
-
-        static let horizontalFenceIndices = [1, 2, 3, 4, 5, 6, 7, 8]
-        static let cornerTopLeft = 17
-        static let cornerTopRight = 19
-        static let cornerBottomLeft = 20
-        static let cornerBottomRight = 22
-        static let verticalFenceIndices = [25, 26, 27, 28]
-        static let verticalEndPost = 32
-    }
 
     private func addBG(){
         bgNode = SKSpriteNode(imageNamed: "bg")
@@ -134,10 +121,39 @@ extension GameScene{
 //MARK - Cat wander
 extension GameScene {
     private enum CatWander {
+        enum WanderDirection: CaseIterable {
+            case top
+            case bottom
+            case left
+            case right
+            case topLeft
+            case topRight
+            case bottomLeft
+            case bottomRight
+
+            var spriteDirection: Direction {
+                switch self {
+                case .top: return .top
+                case .bottom: return .bottom
+                case .left: return .left
+                case .right: return .right
+                case .topLeft: return .topLeft
+                case .topRight: return .topRight
+                case .bottomLeft: return .bottomLeft
+                case .bottomRight: return .bottomRight
+                }
+            }
+        }
+
         static let movementKey = "cat_wander_movement"
         static let minPause: TimeInterval = 0.35
         static let maxPause: TimeInterval = 1.1
+        static let restChance: CGFloat = 0.35
+        static let minRestDuration: TimeInterval = 1.0
+        static let maxRestDuration: TimeInterval = 5.0
         static let speedTilesPerSecond: CGFloat = 1.8
+        static let minStepTiles: CGFloat = 1.0
+        static let maxStepTiles: CGFloat = 4.0
           static let tapPauseKey = "cat_wander_tap_pause"
   static let emojiKey = "cat_tap_emoji"
       static let resumeAfterTap: TimeInterval = 1.2
@@ -148,11 +164,9 @@ extension GameScene {
     private func scheduleNextWanderStep() {
         guard let cat = wanderingCat else { return }
 
-        let target = randomWanderPoint(for: cat)
+        let (target, moveDirection) = randomWanderPoint(for: cat)
         let dx = target.x - cat.position.x
-        //split screen when cat is moving to the right
-        cat.xScale = dx >= 0 ? -abs(cat.xScale) : abs(cat.xScale)
-        cat.runWalkAnimation()
+        cat.runWalkAnimation(direction: moveDirection.spriteDirection)
 
         let distance = hypot(dx, target.y - cat.position.y)
         let speed = tileSize * CatWander.speedTilesPerSecond
@@ -160,11 +174,30 @@ extension GameScene {
 
         let move = SKAction.move(to: target, duration: duration)
         move.timingMode = .easeInEaseOut
-        let pause = SKAction.wait(forDuration: TimeInterval.random(in: CatWander.minPause...CatWander.maxPause))
+        let shouldRest = CGFloat.random(in: 0...1) < CatWander.restChance
+        let pause: SKAction
+        if shouldRest {
+            let rest = SKAction.run { [weak cat] in
+                guard let cat else { return }
+                if Bool.random() {
+                    cat.runLayingAnimation(direction: moveDirection.spriteDirection)
+                } else {
+                    // "sitdown" tạm dùng idle hiện tại để tạo cảm giác ngồi nghỉ.
+                    cat.runIdleAnimation()
+                }
+            }
+            let restWait = SKAction.wait(forDuration: TimeInterval.random(in: CatWander.minRestDuration...CatWander.maxRestDuration))
+            pause = SKAction.sequence([rest, restWait])
+        } else {
+            let shortPause = SKAction.wait(forDuration: TimeInterval.random(in: CatWander.minPause...CatWander.maxPause))
+            let idle = SKAction.run { [weak cat] in
+                cat?.runIdleAnimation()
+            }
+            pause = SKAction.sequence([shortPause, idle])
+        }
 
         let next = SKAction.run { [weak self, weak cat] in
             guard let self, let cat else { return }
-            cat.runIdleAnimation()
             self.scheduleNextWanderStep()
         }
 
@@ -172,7 +205,7 @@ extension GameScene {
         cat.run(SKAction.sequence([move, pause, next]), withKey: CatWander.movementKey)
     }
 
-    private func randomWanderPoint(for cat: SKSpriteNode) -> CGPoint {
+    private func randomWanderPoint(for cat: SKSpriteNode) -> (CGPoint, CatWander.WanderDirection) {
         let mapW = CGFloat(mapWidth) * tileSize
         let mapH = CGFloat(mapHeight) * tileSize
 
@@ -184,10 +217,43 @@ extension GameScene {
         let minY = halfH
         let maxY = mapH - halfH
 
-        return CGPoint(
-            x: CGFloat.random(in: minX...maxX),
-            y: CGFloat.random(in: minY...maxY)
-        )
+        let stepDistance = tileSize * CGFloat.random(in:  CatWander.minStepTiles...CatWander.maxStepTiles)
+        let directions = CatWander.WanderDirection.allCases.shuffled()
+
+        for direction in directions {
+            var target = cat.position
+            switch direction {
+            case .top:
+                target.y += stepDistance
+            case .bottom:
+                target.y -= stepDistance
+            case .left:
+                target.x -= stepDistance
+            case .right:
+                target.x += stepDistance
+            case .topLeft:
+                target.x -= stepDistance
+                target.y += stepDistance
+            case .topRight:
+                target.x += stepDistance
+                target.y += stepDistance
+            case .bottomLeft:
+                target.x -= stepDistance
+                target.y -= stepDistance
+            case .bottomRight:
+                target.x += stepDistance
+                target.y -= stepDistance
+            }
+
+            target.x = min(max(target.x, minX), maxX)
+            target.y = min(max(target.y, minY), maxY)
+
+            if hypot(target.x - cat.position.x, target.y - cat.position.y) > 0.01 {
+                return (target, direction)
+            }
+        }
+
+        return (cat.position, .bottom)
     }
     private func handleCatTapped(_ cat: CatSheet1024Node) {
   cat.removeAction(forKey: CatWander.movementKey)
