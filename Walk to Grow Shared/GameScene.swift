@@ -7,6 +7,9 @@
 
 import SpriteKit
 import GameplayKit
+#if os(iOS) || os(tvOS)
+import UIKit
+#endif
 
 class GameScene: SKScene {
     
@@ -15,6 +18,15 @@ class GameScene: SKScene {
     private var bgNode: SKSpriteNode!
     private var grassNode: GrassNode?
     private weak var wanderingCat: CatSheet1024Node?
+    private let hudNode = SKNode()
+    private let hudBackgroundNode = SKShapeNode()
+    private let stepsLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
+    private let percentLabel = SKLabelNode(fontNamed: "AvenirNext-Medium")
+    private let coinLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
+    private let energyLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
+    private let progressTrackNode = SKShapeNode()
+    private let progressFillNode = SKShapeNode()
+    private var foregroundObserver: NSObjectProtocol?
 
     let tileSize: CGFloat = 54
     let mapWidth = 20
@@ -23,6 +35,24 @@ class GameScene: SKScene {
     //MARK - Lifecycle
     override func didMove(to view: SKView) {
         self.setupNodes()
+        self.setupTopHUD()
+        #if os(iOS)
+        self.refreshTodaySteps()
+        #endif
+        self.observeAppForegroundIfNeeded()
+    }
+
+    override func willMove(from view: SKView) {
+        super.willMove(from: view)
+        if let foregroundObserver {
+            NotificationCenter.default.removeObserver(foregroundObserver)
+            self.foregroundObserver = nil
+        }
+    }
+
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        layoutTopHUD()
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -64,6 +94,169 @@ extension GameScene{
         addBG()
         addGrass()
         spawnPets()
+    }
+}
+
+//MARK - HUD
+extension GameScene {
+    private enum HUDMetrics {
+        static let originX: CGFloat = 300
+        static let originY: CGFloat = 1620
+        static func width(in sceneWidth: CGFloat) -> CGFloat {
+            return sceneWidth*0.6 // Trừ đi lề trái phải (mỗi bên 30)
+            }
+        static let height: CGFloat = 120
+        static let cornerRadius: CGFloat = 20
+        static let progressHeight: CGFloat = 16
+        static let progressInset: CGFloat = 16
+        static let horizontalInset: CGFloat = 20
+    }
+
+    private func setupTopHUD() {
+        guard hudNode.parent == nil else { return }
+
+        hudNode.zPosition = 10_000
+        addChild(hudNode)
+
+        hudBackgroundNode.fillColor = UIColor.black.withAlphaComponent(0.28)
+        hudBackgroundNode.strokeColor = UIColor.white.withAlphaComponent(0.18)
+        hudBackgroundNode.lineWidth = 1
+        hudNode.addChild(hudBackgroundNode)
+
+        stepsLabel.fontSize = 18
+        stepsLabel.fontColor = .white
+        stepsLabel.horizontalAlignmentMode = .left
+        stepsLabel.verticalAlignmentMode = .center
+        hudNode.addChild(stepsLabel)
+
+        percentLabel.fontSize = 15
+        percentLabel.fontColor = UIColor.white.withAlphaComponent(0.9)
+        percentLabel.horizontalAlignmentMode = .right
+        percentLabel.verticalAlignmentMode = .center
+        hudNode.addChild(percentLabel)
+
+        progressTrackNode.fillColor = UIColor.white.withAlphaComponent(0.2)
+        progressTrackNode.strokeColor = .clear
+        hudNode.addChild(progressTrackNode)
+
+        progressFillNode.fillColor = UIColor.systemGreen
+        progressFillNode.strokeColor = .clear
+        hudNode.addChild(progressFillNode)
+
+        coinLabel.fontSize = 16
+        coinLabel.fontColor = .white
+        coinLabel.horizontalAlignmentMode = .left
+        coinLabel.verticalAlignmentMode = .center
+        hudNode.addChild(coinLabel)
+
+        energyLabel.fontSize = 16
+        energyLabel.fontColor = .white
+        energyLabel.horizontalAlignmentMode = .right
+        energyLabel.verticalAlignmentMode = .center
+        hudNode.addChild(energyLabel)
+
+        layoutTopHUD()
+        updateHUD(steps: 0)
+    }
+
+    private func layoutTopHUD() {
+        let hudWidth = HUDMetrics.width(in: size.width)
+        let hudHeight = HUDMetrics.height
+        let origin = CGPoint(x: HUDMetrics.originX, y: HUDMetrics.originY)
+        let rect = CGRect(origin: origin, size: CGSize(width: hudWidth, height: hudHeight))
+
+        hudBackgroundNode.path = CGPath(
+            roundedRect: rect,
+            cornerWidth: HUDMetrics.cornerRadius,
+            cornerHeight: HUDMetrics.cornerRadius,
+            transform: nil
+        )
+
+        stepsLabel.position = CGPoint(x: rect.minX + HUDMetrics.horizontalInset, y: rect.maxY - 26)
+        percentLabel.position = CGPoint(x: rect.maxX - HUDMetrics.horizontalInset, y: rect.maxY - 26)
+
+        let trackY = rect.minY + 52
+        let trackRect = CGRect(
+            x: rect.minX + HUDMetrics.progressInset,
+            y: trackY,
+            width: rect.width - HUDMetrics.progressInset * 2,
+            height: HUDMetrics.progressHeight
+        )
+        progressTrackNode.path = CGPath(
+            roundedRect: trackRect,
+            cornerWidth: HUDMetrics.progressHeight / 2,
+            cornerHeight: HUDMetrics.progressHeight / 2,
+            transform: nil
+        )
+
+        coinLabel.position = CGPoint(x: rect.minX + HUDMetrics.horizontalInset, y: rect.minY + 24)
+        energyLabel.position = CGPoint(x: rect.maxX - HUDMetrics.horizontalInset, y: rect.minY + 24)
+    }
+
+    private func updateHUD(steps: Int) {
+        let progress = GameProgressCalculator.progress(for: steps)
+        let target = GameProgressCalculator.dailyStepTarget
+        let coin = GameProgressCalculator.coin(from: steps)
+        let energy = GameProgressCalculator.energy(from: steps)
+
+        stepsLabel.text = "Steps: \(steps)/\(target)"
+        percentLabel.text = "\(Int(progress * 100))%"
+        coinLabel.text = "Coin: \(coin)"
+        energyLabel.text = "Energy: \(energy)"
+
+        let hudWidth = HUDMetrics.width(in: size.width)
+        let originX = HUDMetrics.originX
+        let barMaxWidth = hudWidth - HUDMetrics.progressInset * 2
+        let fillWidth = min(barMaxWidth * progress, barMaxWidth)
+        if fillWidth <= 0 {
+            progressFillNode.path = nil
+        } else {
+            let fillRect = CGRect(
+                x: originX + HUDMetrics.progressInset,
+                y: HUDMetrics.originY + 52,
+                width: fillWidth,
+                height: HUDMetrics.progressHeight
+            )
+
+            progressFillNode.path = CGPath(
+                roundedRect: fillRect,
+                cornerWidth: HUDMetrics.progressHeight / 2,
+                cornerHeight: HUDMetrics.progressHeight / 2,
+                transform: nil
+            )
+        }
+    }
+
+    #if os(iOS)
+    private func refreshTodaySteps() {
+        HealthKitStepService.shared.requestAuthorizationIfNeeded { [weak self] success in
+            guard let self else { return }
+            guard success else {
+                DispatchQueue.main.async {
+                    self.updateHUD(steps: 0)
+                }
+                return
+            }
+            HealthKitStepService.shared.fetchTodayStepCount { steps in
+                DispatchQueue.main.async {
+                    self.updateHUD(steps: steps)
+                }
+            }
+        }
+    }
+    #endif
+
+    private func observeAppForegroundIfNeeded() {
+        #if os(iOS)
+        guard foregroundObserver == nil else { return }
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshTodaySteps()
+        }
+        #endif
     }
 }
 

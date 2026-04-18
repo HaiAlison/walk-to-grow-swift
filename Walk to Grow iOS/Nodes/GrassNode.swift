@@ -102,7 +102,6 @@ final class GrassNode: SKNode {
                 let patch = SKSpriteNode(texture: firstFrame, size: patchSize)
                 patch.position = center
                 patch.alpha = 0.7
-                print("index: \(index)", "zPosition: \(CGFloat(index))")
                 patch.zPosition = 2.0
                 daisyLayer.addChild(patch)
 
