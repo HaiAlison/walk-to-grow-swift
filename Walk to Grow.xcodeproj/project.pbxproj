@@ -16,8 +16,11 @@
 			membershipExceptions = (
 				Actions.sks,
 				Assets.xcassets,
+				GameAudioSettings.swift,
 				GameScene.sks,
 				GameScene.swift,
+				"Sounds/bg-cat-purr.mp3",
+				"Sounds/cat-meow.mp3",
 			);
 			target = 40F2509F2F7AC90A002B356F /* Walk to Grow iOS */;
 		};

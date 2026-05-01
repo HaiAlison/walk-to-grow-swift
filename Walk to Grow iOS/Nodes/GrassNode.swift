@@ -38,7 +38,8 @@ final class GrassNode: SKNode {
     private static func makeDaisyFrameTextures() -> [SKTexture] {
         let sheet = SKTexture(imageNamed: "grass-daisy-animated-light-grass")
         sheet.filteringMode = .nearest
-        let fullWidth = DaisySheet.framePixelSize * CGFloat(DaisySheet.frameCount)
+        let fullWidth =
+            DaisySheet.framePixelSize * CGFloat(DaisySheet.frameCount)
         let fullHeight = DaisySheet.framePixelSize
 
         return (0..<DaisySheet.frameCount).map { idx in
@@ -69,7 +70,10 @@ final class GrassNode: SKNode {
                 let y = (CGFloat(row) + 0.5) * tileSize
                 let position = CGPoint(x: x, y: y)
 
-                let base = SKSpriteNode(texture: baseTexture, size: CGSize(width: tileSize, height: tileSize))
+                let base = SKSpriteNode(
+                    texture: baseTexture,
+                    size: CGSize(width: tileSize, height: tileSize)
+                )
                 base.position = position
                 baseLayer.addChild(base)
             }
@@ -105,8 +109,16 @@ final class GrassNode: SKNode {
                 patch.zPosition = 2.0
                 daisyLayer.addChild(patch)
 
-                let anim = SKAction.animate(with: daisyTextures, timePerFrame: 0.12, resize: false, restore: false)
-                let delay = SKAction.wait(forDuration: TimeInterval(index % DaisySheet.frameCount) * 0.04)
+                let anim = SKAction.animate(
+                    with: daisyTextures,
+                    timePerFrame: 0.12,
+                    resize: false,
+                    restore: false
+                )
+                let delay = SKAction.wait(
+                    forDuration: TimeInterval(index % DaisySheet.frameCount)
+                        * 0.04
+                )
                 patch.run(.repeatForever(.sequence([delay, anim])))
             }
         }
