@@ -16,16 +16,17 @@ import SpriteKit
 class GameScene: SKScene {
 
     //MARK - Properties
+    var onTodayStepsUpdated: ((Int) -> Void)?
     private let worldNode = SKNode()
     private var bgNode: SKSpriteNode!
     private var grassNode: GrassNode?
-    private weak var wanderingCat: CatSheet1024Node?
+    private var wanderCats: [CatSheet1024Node] = []
     private let hudNode = SKNode()
     private let hudBackgroundNode = SKShapeNode()
-    private let stepsLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
-    private let percentLabel = SKLabelNode(fontNamed: "AvenirNext-Medium")
-    private let coinLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
-    private let energyLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
+    private let stepsLabel = SKLabelNode(fontNamed: GameTypography.skPixelFontName)
+    private let percentLabel = SKLabelNode(fontNamed: GameTypography.skPixelFontName)
+    private let coinLabel = SKLabelNode(fontNamed: GameTypography.skPixelFontName)
+    private let energyLabel = SKLabelNode(fontNamed: GameTypography.skPixelFontName)
     private let progressTrackNode = SKShapeNode()
     private let progressFillNode = SKShapeNode()
     private var foregroundObserver: NSObjectProtocol?
@@ -72,9 +73,15 @@ class GameScene: SKScene {
         print("x:", position.x, "y:", position.y)
 
         let scenePosition = touch.location(in: self)
-        guard let cat = wanderingCat else { return }
-        if nodes(at: scenePosition).contains(where: { $0 === cat }) {
-            handleCatTapped(cat)
+        for node in nodes(at: scenePosition) {
+            var current: SKNode? = node
+            while let c = current {
+                if let cat = c as? CatSheet1024Node, wanderCats.contains(where: { $0 === cat }) {
+                    handleCatTapped(cat)
+                    return
+                }
+                current = c.parent
+            }
         }
     }
 
@@ -114,11 +121,15 @@ class GameScene: SKScene {
             static func width(in sceneWidth: CGFloat) -> CGFloat {
                 return sceneWidth * 0.6  // Trừ đi lề trái phải (mỗi bên 30)
             }
-            static let height: CGFloat = 120
+            static let height: CGFloat = 132
             static let cornerRadius: CGFloat = 20
-            static let progressHeight: CGFloat = 16
+            static let progressHeight: CGFloat = 18
             static let progressInset: CGFloat = 16
             static let horizontalInset: CGFloat = 20
+            /// Khoảng cách từ đáy HUD tới thanh tiến độ (SpriteKit y tăng lên trên).
+            static let progressBarBottomInset: CGFloat = 56
+            /// Khoảng cách từ đỉnh HUD xuống dòng Steps / %.
+            static let topLabelsInsetFromTop: CGFloat = 38
         }
 
         private func setupTopHUD() {
@@ -134,13 +145,13 @@ class GameScene: SKScene {
             hudBackgroundNode.lineWidth = 1
             hudNode.addChild(hudBackgroundNode)
 
-            stepsLabel.fontSize = 18
+            stepsLabel.fontSize = 15
             stepsLabel.fontColor = .white
             stepsLabel.horizontalAlignmentMode = .left
             stepsLabel.verticalAlignmentMode = .center
             hudNode.addChild(stepsLabel)
 
-            percentLabel.fontSize = 15
+            percentLabel.fontSize = 14
             percentLabel.fontColor = UIColor.white.withAlphaComponent(0.9)
             percentLabel.horizontalAlignmentMode = .right
             percentLabel.verticalAlignmentMode = .center
@@ -154,13 +165,13 @@ class GameScene: SKScene {
             progressFillNode.strokeColor = .clear
             hudNode.addChild(progressFillNode)
 
-            coinLabel.fontSize = 16
+            coinLabel.fontSize = 10
             coinLabel.fontColor = .white
             coinLabel.horizontalAlignmentMode = .left
             coinLabel.verticalAlignmentMode = .center
             hudNode.addChild(coinLabel)
 
-            energyLabel.fontSize = 16
+            energyLabel.fontSize = 10
             energyLabel.fontColor = .white
             energyLabel.horizontalAlignmentMode = .right
             energyLabel.verticalAlignmentMode = .center
@@ -188,14 +199,14 @@ class GameScene: SKScene {
 
             stepsLabel.position = CGPoint(
                 x: rect.minX + HUDMetrics.horizontalInset,
-                y: rect.maxY - 26
+                y: rect.maxY - HUDMetrics.topLabelsInsetFromTop
             )
             percentLabel.position = CGPoint(
                 x: rect.maxX - HUDMetrics.horizontalInset,
-                y: rect.maxY - 26
+                y: rect.maxY - HUDMetrics.topLabelsInsetFromTop
             )
 
-            let trackY = rect.minY + 52
+            let trackY = rect.minY + HUDMetrics.progressBarBottomInset
             let trackRect = CGRect(
                 x: rect.minX + HUDMetrics.progressInset,
                 y: trackY,
@@ -229,6 +240,7 @@ class GameScene: SKScene {
             percentLabel.text = "\(Int(progress * 100))%"
             coinLabel.text = "Coin: \(coin)"
             energyLabel.text = "Energy: \(energy)"
+            onTodayStepsUpdated?(steps)
 
             let hudWidth = HUDMetrics.width(in: size.width)
             let originX = HUDMetrics.originX
@@ -239,7 +251,7 @@ class GameScene: SKScene {
             } else {
                 let fillRect = CGRect(
                     x: originX + HUDMetrics.progressInset,
-                    y: HUDMetrics.originY + 52,
+                    y: HUDMetrics.originY + HUDMetrics.progressBarBottomInset,
                     width: fillWidth,
                     height: HUDMetrics.progressHeight
                 )
@@ -315,29 +327,60 @@ class GameScene: SKScene {
             grassNode = node
         }
 
-        /// Mặc định: `normal_cat` (`CatNode`). Premium / skin: 1024×544 (`CatSheet1024Node`).
+        /// Mặc định: mèo đầu tiên trên map.
         func spawnPets() {
+            guard wanderCats.isEmpty else { return }
+            addPetCat(sheetImageName: "black_4", at: defaultSpawnPoint())
+        }
+
+        /// Thêm một mèo mới (skin từ cửa hàng), không xóa mèo cũ.
+        func addWanderingCatFromShop(_ sheetImageName: String) {
+            let idx = wanderCats.count
+            addPetCat(sheetImageName: sheetImageName, at: spawnPointForCatIndex(idx))
+        }
+
+        private func defaultSpawnPoint() -> CGPoint {
+            CGPoint(x: tileSize * 5.5, y: tileSize * 4.5)
+        }
+
+        /// Vị trí spawn theo số mèo hiện có (tránh chồng lên nhau).
+        private func spawnPointForCatIndex(_ index: Int) -> CGPoint {
+            let base = defaultSpawnPoint()
+            let mapW = CGFloat(mapWidth) * tileSize
+            let mapH = CGFloat(mapHeight) * tileSize
+            let margin = tileSize * 2
+            guard index > 0 else {
+                return CGPoint(
+                    x: min(max(base.x, margin), mapW - margin),
+                    y: min(max(base.y, margin), mapH - margin)
+                )
+            }
+            let k = index
+            let angle = CGFloat(k) * 0.72
+            let radius = tileSize * (1.15 + CGFloat(min(k, 10)) * 0.42)
+            var p = CGPoint(
+                x: base.x + cos(angle) * radius,
+                y: base.y + sin(angle) * radius
+            )
+            p.x = min(max(p.x, margin), mapW - margin)
+            p.y = min(max(p.y, margin), mapH - margin)
+            return p
+        }
+
+        private func addPetCat(sheetImageName: String, at position: CGPoint) {
             let s = tileSize * 3
             let anchor = CGPoint(x: 0.5, y: 0.35)
-
-            // let normalCat = CatNode(displaySize: CGSize(width: s, height: s))
-            // normalCat.anchorPoint = anchor
-            // normalCat.position = CGPoint(x: tileSize * 3.5, y: tileSize * 4.5)
-            // normalCat.zPosition = 1
-            // normalCat.runIdleAnimation()
-            // worldNode.addChild(normalCat)
-
-            let premiumCat = CatSheet1024Node(
-                sheetImageName: "black_4",
+            let cat = CatSheet1024Node(
+                sheetImageName: sheetImageName,
                 displaySize: CGSize(width: s, height: s)
             )
-            premiumCat.anchorPoint = anchor
-            premiumCat.position = CGPoint(x: tileSize * 5.5, y: tileSize * 4.5)
-            premiumCat.zPosition = 10.0
-            premiumCat.runIdleAnimation()
-            worldNode.addChild(premiumCat)
-            wanderingCat = premiumCat
-            scheduleNextWanderStep()
+            cat.anchorPoint = anchor
+            cat.position = position
+            cat.zPosition = 10 + CGFloat(wanderCats.count) * 0.02
+            cat.runIdleAnimation()
+            worldNode.addChild(cat)
+            wanderCats.append(cat)
+            scheduleNextWanderStep(for: cat)
         }
 
     }
@@ -385,10 +428,18 @@ class GameScene: SKScene {
                 "😺", "😸", "😻", "😽", "😼", "🐾", "✨", "💤", "🍖", "💛",
             ]
 
+            static func movementActionKey(for cat: CatSheet1024Node) -> String {
+                "\(movementKey).\(ObjectIdentifier(cat))"
+            }
+
+            static func tapPauseActionKey(for cat: CatSheet1024Node) -> String {
+                "\(tapPauseKey).\(ObjectIdentifier(cat))"
+            }
+
         }
 
-        private func scheduleNextWanderStep() {
-            guard let cat = wanderingCat else { return }
+        private func scheduleNextWanderStep(for cat: CatSheet1024Node) {
+            let moveKey = CatWander.movementActionKey(for: cat)
 
             let (target, moveDirection) = randomWanderPoint(for: cat)
             let dx = target.x - cat.position.x
@@ -410,7 +461,6 @@ class GameScene: SKScene {
                             direction: moveDirection.spriteDirection
                         )
                     } else {
-                        // "sitdown" tạm dùng idle hiện tại để tạo cảm giác ngồi nghỉ.
                         cat.runIdleAnimation()
                     }
                 }
@@ -435,13 +485,13 @@ class GameScene: SKScene {
 
             let next = SKAction.run { [weak self, weak cat] in
                 guard let self, let cat else { return }
-                self.scheduleNextWanderStep()
+                self.scheduleNextWanderStep(for: cat)
             }
 
-            cat.removeAction(forKey: CatWander.movementKey)
+            cat.removeAction(forKey: moveKey)
             cat.run(
                 SKAction.sequence([move, pause, next]),
-                withKey: CatWander.movementKey
+                withKey: moveKey
             )
         }
 
@@ -509,20 +559,23 @@ class GameScene: SKScene {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
             #endif
-            cat.removeAction(forKey: CatWander.movementKey)
-            cat.removeAction(forKey: CatWander.tapPauseKey)
+            let moveKey = CatWander.movementActionKey(for: cat)
+            let pauseKey = CatWander.tapPauseActionKey(for: cat)
+            cat.removeAction(forKey: moveKey)
+            cat.removeAction(forKey: pauseKey)
             cat.runIdleAnimation()
             self.playMeowSound()
             showRandomEmoji(above: cat)
-            let resume = SKAction.run { [weak self] in
-                self?.scheduleNextWanderStep()
+            let resume = SKAction.run { [weak self, weak cat] in
+                guard let self, let cat else { return }
+                self.scheduleNextWanderStep(for: cat)
             }
             cat.run(
                 SKAction.sequence([
                     SKAction.wait(forDuration: CatWander.resumeAfterTap),
                     resume,
                 ]),
-                withKey: CatWander.tapPauseKey
+                withKey: pauseKey
             )
         }
         private func showRandomEmoji(above cat: SKSpriteNode) {

@@ -26,5 +26,9 @@
 		<key>UIColorName</key>
 		<string>Black</string>
 	</dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Fonts/PressStart2P-Regular.ttf</string>
+	</array>
 </dict>
 </plist>

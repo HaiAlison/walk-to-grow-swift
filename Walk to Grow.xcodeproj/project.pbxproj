@@ -19,6 +19,7 @@
 				GameAudioSettings.swift,
 				GameScene.sks,
 				GameScene.swift,
+				GameTypography.swift,
 				"Sounds/bg-cat-purr.mp3",
 				"Sounds/cat-meow.mp3",
 			);
