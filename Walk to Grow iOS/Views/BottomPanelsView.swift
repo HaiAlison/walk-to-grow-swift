@@ -32,6 +32,7 @@ struct SettingsPanelState {
 private enum SettingsSubTab: CaseIterable {
     case routine
     case sound
+    case walkingTips
     case feedback
 
     var title: String {
@@ -40,6 +41,8 @@ private enum SettingsSubTab: CaseIterable {
             return "Routine"
         case .sound:
             return "Âm thanh"
+        case .walkingTips:
+            return "Học tập"
         case .feedback:
             return "Thiết bị"
         }
@@ -51,6 +54,8 @@ private enum SettingsSubTab: CaseIterable {
             return "figure.walk"
         case .sound:
             return "speaker.wave.2.fill"
+        case .walkingTips:
+            return "book.fill"
         case .feedback:
             return "iphone.radiowaves.left.and.right"
         }
@@ -66,6 +71,12 @@ final class BottomPanelsView: UIView {
     var onShopCoinsSpent: ((Int) -> Void)?
     /// Gọi sau khi mua thành công skin mèo (`imageset` trong `cat_sheet_1024x544`).
     var onCatSkinPurchased: ((String) -> Void)?
+    /// Mở URL (YouTube, web) trong trình duyệt trong app (`SFSafariViewController`).
+    var onOpenExternalURL: ((URL) -> Void)?
+    /// Chuyển sang Cài đặt → thẻ Học tập (thư viện mẹo đi bộ).
+    var onRequestOpenTipLibrary: (() -> Void)?
+    /// Người chơi mua thức ăn cho mèo đói.
+    var onBuyFoodTapped: (() -> Void)?
 
     private let titleLabel = UILabel()
     private let contentStack = UIStackView()
@@ -96,8 +107,21 @@ final class BottomPanelsView: UIView {
         selectedWeekdays: [2, 3, 4, 5, 6],
         stepGoal: 8000
     )
+    /// Nội dung serious game (đi bộ an toàn); nil nếu không đọc được JSON bundle.
+    private let seriousWalkingTipsDocument: WalkingTipsDocument?
+    /// Mẹo đang xem chi tiết trong Cài đặt → Học tập; nil = danh sách.
+    private var seriousGameLibrarySelectionId: String?
+    private var seriousWalkingTips: [WalkingTip] { seriousWalkingTipsDocument?.tips ?? [] }
+    private var seriousDisclaimer: String {
+        seriousWalkingTipsDocument?.disclaimer
+            ?? "Nội dung chỉ mang tính tham khảo, không thay thế tư vấn y tế hay huấn luyện cá nhân."
+    }
     /// Skin mèo (imageset `cat_sheet_1024x544`) đã mua trong phiên hiện tại.
     private var ownedCatSkinIds = Set<String>()
+    /// Mèo đang đói — hiển thị nút mua thức ăn nổi bật.
+    private var isCatHungry = false
+    /// Chi phí thức ăn (xu).
+    private let foodCost = 10
 
     /// Nền cửa hàng: lặp tile ảnh 32×32 (`UIColor(patternImage:)`).
     private let shopBackgroundPatternView: UIView = {
@@ -112,16 +136,21 @@ final class BottomPanelsView: UIView {
     }()
 
     override init(frame: CGRect) {
+        seriousWalkingTipsDocument = SeriousGameTipsRepository.loadDocument()
         super.init(frame: frame)
         setupUI()
     }
 
     required init?(coder: NSCoder) {
+        seriousWalkingTipsDocument = SeriousGameTipsRepository.loadDocument()
         super.init(coder: coder)
         setupUI()
     }
 
     func show(tab: BottomTab) {
+        if tab != .settings {
+            seriousGameLibrarySelectionId = nil
+        }
         currentTab = tab
         switch tab {
         case .home:
@@ -135,8 +164,25 @@ final class BottomPanelsView: UIView {
         }
     }
 
+    /// Mở Cài đặt tại thẻ Học tập (thư viện mẹo đi bộ). `GameViewController` nên gọi kèm `menuView.select(tab: .settings)`.
+    func presentWalkingTipsLibrary() {
+        seriousGameLibrarySelectionId = nil
+        selectedSettingsSubTab = .walkingTips
+        show(tab: .settings)
+    }
+
     func applyHomeState(_ state: HomePanelState) {
         homeState = state
+        if currentTab == .home {
+            renderHomePanel()
+        } else if currentTab == .shop {
+            renderShopPanel()
+        }
+    }
+
+    /// Cập nhật trạng thái đói và re-render panel hiện tại.
+    func setCatHungry(_ hungry: Bool) {
+        isCatHungry = hungry
         if currentTab == .home {
             renderHomePanel()
         } else if currentTab == .shop {
@@ -237,6 +283,10 @@ final class BottomPanelsView: UIView {
         contentStack.addArrangedSubview(
             makeInfoLabel("Chuỗi điểm danh: \(homeState.checkinStreak) ngày")
         )
+        contentStack.addArrangedSubview(makeSeriousGameHomeSection())
+        if isCatHungry {
+            contentStack.addArrangedSubview(makeHungerWarningBanner())
+        }
         if homeState.isCheckinClaimedToday {
             let rewardText = homeState.latestCheckinRewardText ?? "Đã nhận thưởng hôm nay"
             contentStack.addArrangedSubview(makeInfoLabel("Điểm danh: \(rewardText)"))
@@ -250,6 +300,9 @@ final class BottomPanelsView: UIView {
         applyShopBackgroundStyle(isShop: true)
         clearContent()
 
+        if isCatHungry {
+            contentStack.addArrangedSubview(makeHungerFoodRow())
+        }
         contentStack.addArrangedSubview(
             makeInfoLabel(
                 "Mỗi skin mèo \(ShopCatalog.defaultCatPriceCoins) xu. Chạm mèo để mua."
@@ -272,10 +325,10 @@ final class BottomPanelsView: UIView {
         )
         contentStack.addArrangedSubview(grid)
 
-        // contentStack.addArrangedSubview(makeInfoLabel("Vật phẩm"))
-        // contentStack.addArrangedSubview(
-        //     makeShopAccessoryRow(title: "Bánh cá (+năng lượng)", cost: 25)
-        // )
+        contentStack.addArrangedSubview(makeInfoLabel("Vật phẩm"))
+        contentStack.addArrangedSubview(
+            makeShopAccessoryRow(title: "Bánh cá (+năng lượng)", cost: 25)
+        )
         // contentStack.addArrangedSubview(
         //     makeShopAccessoryRow(title: "Nơ cổ cao cấp", cost: 80)
         // )
@@ -295,6 +348,100 @@ final class BottomPanelsView: UIView {
         onShopCoinsSpent?(price)
         onCatSkinPurchased?(sheetId)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    }
+
+    // MARK: - Hunger UI helpers
+
+    /// Banner cảnh báo đói trên Home panel.
+    private func makeHungerWarningBanner() -> UIView {
+        let banner = UIView()
+        banner.backgroundColor = UIColor.systemRed.withAlphaComponent(0.25)
+        banner.layer.cornerRadius = 10
+        banner.layer.borderColor = UIColor.systemRed.withAlphaComponent(0.6).cgColor
+        banner.layer.borderWidth = 1
+
+        let label = UILabel()
+        label.text = "🍽️ Mèo đang đói! Vào cửa hàng mua thức ăn!"
+        label.textColor = .white
+        label.font = GameTypography.uiFont(ofSize: 12)
+        label.numberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        banner.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: banner.topAnchor, constant: 10),
+            label.leadingAnchor.constraint(equalTo: banner.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: banner.trailingAnchor, constant: -12),
+            label.bottomAnchor.constraint(equalTo: banner.bottomAnchor, constant: -10),
+        ])
+        return banner
+    }
+
+    /// Hàng mua thức ăn nổi bật khi mèo đói — hiện ở đầu Shop panel.
+    private func makeHungerFoodRow() -> UIView {
+        let container = UIView()
+        container.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.2)
+        container.layer.cornerRadius = 12
+        container.layer.borderColor = UIColor.systemOrange.withAlphaComponent(0.6).cgColor
+        container.layer.borderWidth = 1.5
+
+        let stack = UIStackView()
+        stack.axis = .horizontal
+        stack.spacing = 10
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let emoji = UILabel()
+        emoji.text = "🍽️"
+        emoji.font = .systemFont(ofSize: 28)
+
+        let textStack = UIStackView()
+        textStack.axis = .vertical
+        textStack.spacing = 2
+
+        let title = UILabel()
+        title.text = "Mèo đang đói!"
+        title.textColor = .systemOrange
+        title.font = GameTypography.uiFont(ofSize: 13)
+
+        let subtitle = UILabel()
+        subtitle.text = "Mua thức ăn để mèo hoạt động lại"
+        subtitle.textColor = UIColor.white.withAlphaComponent(0.8)
+        subtitle.font = GameTypography.uiFont(ofSize: 10)
+
+        textStack.addArrangedSubview(title)
+        textStack.addArrangedSubview(subtitle)
+
+        let canAfford = homeState.coins >= foodCost
+
+        var buyConfig = UIButton.Configuration.filled()
+        buyConfig.title = canAfford ? "Mua \(foodCost) xu" : "Thiếu xu"
+        buyConfig.baseBackgroundColor = canAfford ? .systemOrange : .systemGray
+        buyConfig.baseForegroundColor = .white
+        buyConfig.cornerStyle = .medium
+        applyPixelButtonTitle(&buyConfig, fontSize: 11)
+
+        let buyButton = UIButton(type: .system)
+        buyButton.configuration = buyConfig
+        buyButton.isEnabled = canAfford
+        buyButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.onBuyFoodTapped?()
+        }, for: .touchUpInside)
+        buyButton.setContentHuggingPriority(.required, for: .horizontal)
+
+        stack.addArrangedSubview(emoji)
+        stack.addArrangedSubview(textStack)
+        stack.addArrangedSubview(buyButton)
+
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+        ])
+        return container
     }
 
     /// Hàng vật phẩm: ô icon để trống (chưa có asset), tên + nút mua.
@@ -377,9 +524,182 @@ final class BottomPanelsView: UIView {
             renderRoutineSettingsContent()
         case .sound:
             renderSoundSettingsContent()
+        case .walkingTips:
+            renderWalkingTipsSettingsContent()
         case .feedback:
             renderDeviceSettingsContent()
         }
+    }
+
+    private func renderWalkingTipsSettingsContent() {
+        contentStack.addArrangedSubview(makeDisclaimerLabel(seriousDisclaimer))
+        if seriousWalkingTips.isEmpty {
+            contentStack.addArrangedSubview(
+                makeInfoLabel("Không tải được danh sách mẹo. Kiểm tra file WalkingTips.json trong bundle.")
+            )
+            return
+        }
+        if let selId = seriousGameLibrarySelectionId,
+           let tip = seriousWalkingTips.first(where: { $0.id == selId }) {
+            contentStack.addArrangedSubview(makeWalkingTipDetailColumn(for: tip))
+        } else {
+            contentStack.addArrangedSubview(makeWalkingTipsLibraryScroll())
+        }
+    }
+
+    private func makeWalkingTipsLibraryScroll() -> UIScrollView {
+        let scroll = UIScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.alwaysBounceVertical = true
+
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        for tip in seriousWalkingTips {
+            stack.addArrangedSubview(makeTipTitleRowButton(tip: tip))
+        }
+
+        scroll.addSubview(stack)
+        NSLayoutConstraint.activate([
+            scroll.heightAnchor.constraint(equalToConstant: 280),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor),
+        ])
+        return scroll
+    }
+
+    private func makeTipTitleRowButton(tip: WalkingTip) -> UIButton {
+        var config = UIButton.Configuration.tinted()
+        config.title = tip.title
+        config.baseBackgroundColor = UIColor.white.withAlphaComponent(0.15)
+        config.baseForegroundColor = .white
+        config.cornerStyle = .medium
+        config.titleAlignment = .leading
+        config.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12)
+        applyPixelButtonTitle(&config, fontSize: 11)
+        let button = UIButton(type: .system)
+        button.configuration = config
+        button.contentHorizontalAlignment = .leading
+        button.addAction(UIAction { [weak self] _ in
+            self?.seriousGameLibrarySelectionId = tip.id
+            self?.renderSettingsPanel()
+        }, for: .touchUpInside)
+        return button
+    }
+
+    private func makeWalkingTipDetailColumn(for tip: WalkingTip) -> UIView {
+        let column = UIStackView()
+        column.axis = .vertical
+        column.spacing = 10
+
+        var backConfig = UIButton.Configuration.tinted()
+        backConfig.title = "← Danh sách"
+        backConfig.baseBackgroundColor = UIColor.white.withAlphaComponent(0.12)
+        backConfig.baseForegroundColor = .white
+        backConfig.cornerStyle = .medium
+        applyPixelButtonTitle(&backConfig, fontSize: 11)
+        let back = UIButton(type: .system)
+        back.configuration = backConfig
+        back.contentHorizontalAlignment = .leading
+        back.addAction(UIAction { [weak self] _ in
+            self?.seriousGameLibrarySelectionId = nil
+            self?.renderSettingsPanel()
+        }, for: .touchUpInside)
+        column.addArrangedSubview(back)
+
+        let title = makeInfoLabel(tip.title)
+        title.font = GameTypography.uiFont(ofSize: 13)
+        column.addArrangedSubview(title)
+
+        let body = makeInfoLabel(tip.body)
+        body.font = GameTypography.uiFont(ofSize: 12)
+        column.addArrangedSubview(body)
+
+        if let s = tip.youtubeURL, let url = URL(string: s) {
+            column.addArrangedSubview(makeOpenURLButton(title: "Mở video trên YouTube", url: url))
+        } else {
+            column.addArrangedSubview(
+                makeInfoLabel("Mục này chưa gắn video — bạn có thể xem các mục khác có nút YouTube.")
+            )
+        }
+        return column
+    }
+
+    private func makeOpenURLButton(title: String, url: URL) -> UIButton {
+        var config = UIButton.Configuration.filled()
+        config.title = title
+        config.baseBackgroundColor = .systemBlue
+        config.baseForegroundColor = .white
+        config.cornerStyle = .medium
+        applyPixelButtonTitle(&config, fontSize: 11)
+        let button = UIButton(type: .system)
+        button.configuration = config
+        button.contentHorizontalAlignment = .center
+        button.addAction(UIAction { [weak self] _ in
+            self?.onOpenExternalURL?(url)
+        }, for: .touchUpInside)
+        return button
+    }
+
+    private func makeDisclaimerLabel(_ text: String) -> UILabel {
+        let label = UILabel()
+        label.text = text
+        label.numberOfLines = 0
+        label.textColor = UIColor.white.withAlphaComponent(0.55)
+        label.font = GameTypography.uiFont(ofSize: 9)
+        return label
+    }
+
+    private func makeSeriousGameHomeSection() -> UIView {
+        let column = UIStackView()
+        column.axis = .vertical
+        column.spacing = 8
+
+        let heading = UILabel()
+        heading.text = "Mẹo hôm nay (đi bộ / vận động nhẹ)"
+        heading.font = GameTypography.uiFont(ofSize: 13)
+        heading.textColor = .systemYellow
+        column.addArrangedSubview(heading)
+
+        guard let tip = SeriousGameTipsRepository.dailyTip(from: seriousWalkingTips) else {
+            column.addArrangedSubview(
+                makeInfoLabel("Chưa có nội dung. Thêm file WalkingTips.json vào bundle để hiển thị mẹo.")
+            )
+            return column
+        }
+
+        column.addArrangedSubview(makeInfoLabel(tip.title))
+        let body = makeInfoLabel(tip.body)
+        body.font = GameTypography.uiFont(ofSize: 11)
+        column.addArrangedSubview(body)
+
+        if let s = tip.youtubeURL, let url = URL(string: s) {
+            column.addArrangedSubview(makeOpenURLButton(title: "Xem video gợi ý", url: url))
+        }
+
+        column.addArrangedSubview(makeOpenLibraryFromHomeButton())
+        column.addArrangedSubview(makeDisclaimerLabel(seriousDisclaimer))
+        return column
+    }
+
+    private func makeOpenLibraryFromHomeButton() -> UIButton {
+        var config = UIButton.Configuration.filled()
+        config.title = "Mở thư viện mẹo đi bộ"
+        config.baseBackgroundColor = UIColor.systemTeal
+        config.baseForegroundColor = .white
+        config.cornerStyle = .medium
+        applyPixelButtonTitle(&config, fontSize: 11)
+        let button = UIButton(type: .system)
+        button.configuration = config
+        button.addAction(UIAction { [weak self] _ in
+            self?.onRequestOpenTipLibrary?()
+        }, for: .touchUpInside)
+        return button
     }
 
     private func renderRoutineSettingsContent() {

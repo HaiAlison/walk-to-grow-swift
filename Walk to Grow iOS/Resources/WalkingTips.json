@@ -1,0 +1,47 @@
+{
+  "disclaimer": "Nội dung chỉ mang tính tham khảo, không thay thế tư vấn y tế hay huấn luyện cá nhân. Dừng vận động và tham khảo chuyên gia nếu có đau kéo dài, chóng mặt hoặc khó thở.",
+  "tips": [
+    {
+      "id": "warmup",
+      "title": "Khởi động nhẹ trước khi tăng tốc",
+      "body": "Đi chậm 3–5 phút, xoay cổ tay–cổ chân nhẹ, rồi mới tăng nhịp. Giúp cơ và khớp thích nghi, giảm nguy cơ căng cơ khi đi bộ nhanh hoặc chạy nhẹ.",
+      "youtubeURL": "https://www.youtube.com/watch?v=q-_BWXpM-Y0",
+      "tags": ["khởi động", "NIA"]
+    },
+    {
+      "id": "shoes",
+      "title": "Giày dép và mặt đường",
+      "body": "Chọn giày vừa chân, đế có đệm vừa phải; tránh đế quá cứng khi đi xa. Khi mới tập, ưu tiên đường bằng, ít ổ gà để làm quen nhịp bước.",
+      "youtubeURL": null,
+      "tags": ["thiết bị"]
+    },
+    {
+      "id": "posture",
+      "title": "Tư thế thân trên khi đi nhanh",
+      "body": "Ngực mở nhẹ, mắt nhìn phía trước, cánh tay đung tự nhiên. Tránh cúi gằm màn hình điện thoại lâu để cổ–lưng không bị mỏi.",
+      "youtubeURL": "https://www.youtube.com/watch?v=z_GKdFf3qv4",
+      "tags": ["tư thế", "cân bằng"]
+    },
+    {
+      "id": "breathing",
+      "title": "Nhịp thở và nói thử",
+      "body": "Nếu còn nói câu dài mà không quá thở dốc, cường độ thường an toàn cho người mới. Khi thở gấp quá mức, hãy chậm lại vài phút.",
+      "youtubeURL": null,
+      "tags": ["cường độ"]
+    },
+    {
+      "id": "progression",
+      "title": "Tăng quãng đường từ từ",
+      "body": "Tuần này chỉ nên tăng tổng thời gian hoặc tốc độ khoảng 10% so với tuần trước. Quy tắc nhỏ này giúp cơ quen tải mà ít quá tải.",
+      "youtubeURL": null,
+      "tags": ["tiến triển"]
+    },
+    {
+      "id": "cooldown",
+      "title": "Hạ nhịp (cool-down)",
+      "body": "Trước khi dừng hẳn, đi chậm dần 3–5 phút và giãn nhẹ đùi–bắp chân. Giúp nhịp tim hạ từ từ, dễ chịu hơn cho hệ tuần hoàn.",
+      "youtubeURL": null,
+      "tags": ["hồi phục"]
+    }
+  ]
+}
