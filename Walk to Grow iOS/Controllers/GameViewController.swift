@@ -6,6 +6,7 @@
 //
 
 import GameplayKit
+import SafariServices
 import SpriteKit
 import UIKit
 
@@ -41,6 +42,9 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
         scene.scaleMode = .aspectFill
         scene.onTodayStepsUpdated = { [weak self] steps in
             self?.handleStepsUpdated(steps)
+        }
+        scene.onHungerStateChanged = { [weak self] isHungry in
+            self?.handleHungerStateChanged(isHungry)
         }
         gameScene = scene
 
@@ -126,6 +130,19 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
         }
         panelView.onCatSkinPurchased = { [weak self] sheetImageName in
             self?.gameScene?.addWanderingCatFromShop(sheetImageName)
+        }
+        panelView.onOpenExternalURL = { [weak self] url in
+            let safari = SFSafariViewController(url: url)
+            safari.modalPresentationStyle = .pageSheet
+            self?.present(safari, animated: true)
+        }
+        panelView.onRequestOpenTipLibrary = { [weak self] in
+            guard let self else { return }
+            self.menuView.select(tab: .settings)
+            self.panelView.presentWalkingTipsLibrary()
+        }
+        panelView.onBuyFoodTapped = { [weak self] in
+            self?.handleBuyFood()
         }
 
         menuView.select(tab: .home)
@@ -227,6 +244,26 @@ class GameViewController: UIViewController, UIGestureRecognizerDelegate {
         routineState.selectedWeekdays = weekdays
         refreshStreakStatesForToday()
         saveStreakStates()
+        updatePanelStates()
+    }
+
+    // MARK: - Hunger
+
+    private func handleHungerStateChanged(_ isHungry: Bool) {
+        panelView.setCatHungry(isHungry)
+        if isHungry {
+            // Tự động chuyển sang tab Shop và hiện panel
+            menuView.select(tab: .shop)
+            panelView.isHidden = false
+            panelView.show(tab: .shop)
+        }
+    }
+
+    private func handleBuyFood() {
+        let foodCost = 10
+        guard displayWalletCoins() >= foodCost else { return }
+        shopSessionCoinsSpent += foodCost
+        gameScene?.feedCats()
         updatePanelStates()
     }
 

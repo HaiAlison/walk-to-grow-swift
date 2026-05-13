@@ -10,7 +10,7 @@ enum ShopCatalog {
     static let catSheetImageNames: [String] = [
         "black_0",
         "blue_0",
-        "brown_0",
+        "yellow_0",
         "calico_0",
         "cotton_candy_blue_0",
         "creme_0",
@@ -30,7 +30,7 @@ enum ShopCatalog {
         "teal_0",
         "white_0",
         "white_grey_0",
-        "yellow_0",
+        "brown_0"
     ]
 
     static let defaultCatPriceCoins = 5

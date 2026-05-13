@@ -17,6 +17,8 @@ class GameScene: SKScene {
 
     //MARK - Properties
     var onTodayStepsUpdated: ((Int) -> Void)?
+    /// Callback khi trạng thái đói thay đổi: `true` = đói, `false` = no đủ.
+    var onHungerStateChanged: ((Bool) -> Void)?
     private let worldNode = SKNode()
     private var bgNode: SKSpriteNode!
     private var grassNode: GrassNode?
@@ -33,6 +35,8 @@ class GameScene: SKScene {
     private var bgMusicPlayer: AVAudioPlayer?
     private var meowPlayer: AVAudioPlayer?
     private let normalBackgroundMusicVolume: Float = 0.35
+    /// Trạng thái đói toàn cục — khi `true`, mèo nằm bẹp và không wander.
+    private var isHungry = false
 
     let tileSize: CGFloat = 54
     let mapWidth = 20
@@ -60,7 +64,10 @@ class GameScene: SKScene {
 
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
-        layoutTopHUD()
+        #if os(iOS) || os(tvOS)
+            layoutTopHUD()
+            layoutGrassAndWorldForSceneSize()
+        #endif
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -97,19 +104,16 @@ class GameScene: SKScene {
         private func setupNodes() {
             backgroundColor = .blue
 
-            // Căn giữa lưới map trong scene (gốc mặc định scene ở góc dưới-trái;
-            // với aspectFill, nội dung gần (0,0) thường bị lệch ra ngoài vùng nhìn thấy).
-            let mapW = CGFloat(mapWidth) * tileSize
-            let mapH = CGFloat(mapHeight) * tileSize
-            worldNode.position = CGPoint(
-                x: size.width / 2 - mapW / 2,
-                y: size.height / 2 - mapH / 2
-            )
+            // Nền cỏ phủ full `size`; map mèo (worldNode) căn giữa scene.
             addChild(worldNode)
+            worldNode.zPosition = 1
+
+            layoutGrassAndWorldForSceneSize()
 
             addBG()
-            addGrass()
             spawnPets()
+            scheduleAutoTipLoop()
+            scheduleHungerTimer()
         }
     }
 
@@ -145,13 +149,13 @@ class GameScene: SKScene {
             hudBackgroundNode.lineWidth = 1
             hudNode.addChild(hudBackgroundNode)
 
-            stepsLabel.fontSize = 15
+            stepsLabel.fontSize = 20
             stepsLabel.fontColor = .white
             stepsLabel.horizontalAlignmentMode = .left
             stepsLabel.verticalAlignmentMode = .center
             hudNode.addChild(stepsLabel)
 
-            percentLabel.fontSize = 14
+            percentLabel.fontSize = 18
             percentLabel.fontColor = UIColor.white.withAlphaComponent(0.9)
             percentLabel.horizontalAlignmentMode = .right
             percentLabel.verticalAlignmentMode = .center
@@ -165,13 +169,13 @@ class GameScene: SKScene {
             progressFillNode.strokeColor = .clear
             hudNode.addChild(progressFillNode)
 
-            coinLabel.fontSize = 10
+            coinLabel.fontSize = 14
             coinLabel.fontColor = .white
             coinLabel.horizontalAlignmentMode = .left
             coinLabel.verticalAlignmentMode = .center
             hudNode.addChild(coinLabel)
 
-            energyLabel.fontSize = 10
+            energyLabel.fontSize = 14
             energyLabel.fontColor = .white
             energyLabel.horizontalAlignmentMode = .right
             energyLabel.verticalAlignmentMode = .center
@@ -316,14 +320,25 @@ class GameScene: SKScene {
             addChild(bgNode)
         }
 
-        private func addGrass() {
-            let node = GrassNode(
-                columns: mapWidth,
-                rows: mapHeight,
-                tileSize: tileSize
+        /// Căn map chơi (mèo) giữa scene; nền cỏ phủ toàn bộ `size` (tọa độ scene, góc dưới-trái).
+        func layoutGrassAndWorldForSceneSize() {
+            let mapW = CGFloat(mapWidth) * tileSize
+            let mapH = CGFloat(mapHeight) * tileSize
+            worldNode.position = CGPoint(
+                x: size.width / 2 - mapW / 2,
+                y: size.height / 2 - mapH / 2
             )
+            rebuildFullScreenGrass()
+        }
+
+        private func rebuildFullScreenGrass() {
+            grassNode?.removeFromParent()
+            let columns = max(1, Int(ceil(size.width / tileSize)))
+            let rows = max(1, Int(ceil(size.height / tileSize)))
+            let node = GrassNode(columns: columns, rows: rows, tileSize: tileSize)
+            node.position = .zero
             node.zPosition = 0
-            worldNode.addChild(node)
+            insertChild(node, at: 0)
             grassNode = node
         }
 
@@ -422,10 +437,31 @@ class GameScene: SKScene {
             static let minStepTiles: CGFloat = 1.0
             static let maxStepTiles: CGFloat = 4.0
             static let tapPauseKey = "cat_wander_tap_pause"
-            static let emojiKey = "cat_tap_emoji"
-            static let resumeAfterTap: TimeInterval = 1.2
-            static let emojis = [
-                "😺", "😸", "😻", "😽", "😼", "🐾", "✨", "💤", "🍖", "💛",
+            static let tipBubbleKey = "cat_tap_tip_bubble"
+            static let resumeAfterTap: TimeInterval = 3.5
+            static let autoTipActionKey = "cat_auto_tip_loop"
+            static let hungerActionKey = "cat_hunger_timer"
+            static let hungerBubbleKey = "cat_hunger_bubble"
+            static let hungerMinInterval: TimeInterval = 45
+            static let hungerMaxInterval: TimeInterval = 90
+            static let autoTipMinInterval: TimeInterval = 8
+            static let autoTipMaxInterval: TimeInterval = 15
+            static let walkingTips: [String] = [
+                "Giữ lưng thẳng\nkhi đi bộ nhé! 🐾",
+                "Hít thở đều đặn,\nhít vào bằng mũi! 🌬️",
+                "Uống nước trước\nkhi đi bộ nha! 💧",
+                "Khởi động nhẹ\ntrước khi đi! 🤸",
+                "Đi bộ 30 phút\nmỗi ngày là đủ! ⏱️",
+                "Mắt nhìn thẳng,\nkhông cúi đầu! 👀",
+                "Bước chân vừa phải,\nkhông quá dài! 👟",
+                "Thả lỏng vai\nkhi đi bộ nhé! 😌",
+                "Đi bộ buổi sáng\ntốt cho sức khỏe! 🌅",
+                "Nghỉ ngơi nếu\ncảm thấy mệt! 💤",
+                "Chọn giày thoải mái\nđể bảo vệ chân! 👟",
+                "Đi bộ sau ăn\ngiúp tiêu hóa tốt! 🍽️",
+                "Tay vung tự nhiên\ntheo nhịp bước! 💪",
+                "Đặt mục tiêu nhỏ,\ntăng dần mỗi ngày! 📈",
+                "Đi cùng bạn bè\nsẽ vui hơn! 🐱‍👤",
             ]
 
             static func movementActionKey(for cat: CatSheet1024Node) -> String {
@@ -439,6 +475,7 @@ class GameScene: SKScene {
         }
 
         private func scheduleNextWanderStep(for cat: CatSheet1024Node) {
+            guard !isHungry else { return }
             let moveKey = CatWander.movementActionKey(for: cat)
 
             let (target, moveDirection) = randomWanderPoint(for: cat)
@@ -559,13 +596,19 @@ class GameScene: SKScene {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
             #endif
+            // Khi đói, tap mèo chỉ hiện lại bubble đói, không resume wander
+            if isHungry {
+                self.playMeowSound()
+                showHungerBubble(above: cat)
+                return
+            }
             let moveKey = CatWander.movementActionKey(for: cat)
             let pauseKey = CatWander.tapPauseActionKey(for: cat)
             cat.removeAction(forKey: moveKey)
             cat.removeAction(forKey: pauseKey)
             cat.runIdleAnimation()
             self.playMeowSound()
-            showRandomEmoji(above: cat)
+            showWalkingTip(above: cat)
             let resume = SKAction.run { [weak self, weak cat] in
                 guard let self, let cat else { return }
                 self.scheduleNextWanderStep(for: cat)
@@ -578,37 +621,259 @@ class GameScene: SKScene {
                 withKey: pauseKey
             )
         }
-        private func showRandomEmoji(above cat: SKSpriteNode) {
-            cat.childNode(withName: CatWander.emojiKey)?.removeFromParent()
-            let emojiNode = SKLabelNode(fontNamed: "AppleColorEmoji")
-            emojiNode.name = CatWander.emojiKey
-            emojiNode.text = CatWander.emojis.randomElement() ?? "😺"
-            emojiNode.fontSize = max(28, tileSize * 0.7)
-            emojiNode.verticalAlignmentMode = .center
-            emojiNode.horizontalAlignmentMode = .center
-            emojiNode.position = CGPoint(x: 0, y: cat.size.height * 0.9)
-            emojiNode.zPosition = cat.zPosition + 1
-            cat.addChild(emojiNode)
-            let popIn = SKAction.scale(to: 1.08, duration: 0.1)
-            let settle = SKAction.scale(to: 1.0, duration: 0.1)
-            let floatUp = SKAction.moveBy(
-                x: 0,
-                y: tileSize * 0.6,
-                duration: 0.8
+        private func showWalkingTip(above cat: SKSpriteNode) {
+            cat.childNode(withName: CatWander.tipBubbleKey)?.removeFromParent()
+
+            let tipText = CatWander.walkingTips.randomElement() ?? "Đi bộ vui vẻ nhé! 🐾"
+
+            // --- Bubble container ---
+            let bubbleNode = SKNode()
+            bubbleNode.name = CatWander.tipBubbleKey
+            bubbleNode.zPosition = cat.zPosition + 2
+
+            // --- Text label ---
+            let fontSize: CGFloat = max(14, tileSize * 0.32)
+            let label = SKLabelNode(fontNamed: GameTypography.skPixelFontName)
+            label.text = tipText
+            label.fontSize = fontSize
+            label.fontColor = SKColor(red: 0.18, green: 0.14, blue: 0.12, alpha: 1)
+            label.numberOfLines = 0
+            label.preferredMaxLayoutWidth = tileSize * 3.2
+            label.verticalAlignmentMode = .center
+            label.horizontalAlignmentMode = .center
+            label.lineBreakMode = .byWordWrapping
+
+            // --- Measure text for bubble size ---
+            let textFrame = label.frame
+            let paddingH: CGFloat = tileSize * 0.35
+            let paddingV: CGFloat = tileSize * 0.25
+            let bubbleWidth = max(textFrame.width + paddingH * 2, tileSize * 2.6)
+            let bubbleHeight = max(textFrame.height + paddingV * 2, tileSize * 0.9)
+            let cornerRadius: CGFloat = tileSize * 0.2
+
+            // --- Rounded-rect body ---
+            let bodyRect = CGRect(
+                x: -bubbleWidth / 2,
+                y: 0,
+                width: bubbleWidth,
+                height: bubbleHeight
             )
-            let fadeOut = SKAction.fadeOut(withDuration: 0.8)
-            let group = SKAction.group([floatUp, fadeOut])
-            emojiNode.setScale(0.6)
-            emojiNode.alpha = 0
-            emojiNode.run(
-                SKAction.sequence([
-                    SKAction.group([SKAction.fadeIn(withDuration: 0.12), popIn]
-                    ),
-                    settle,
-                    group,
-                    SKAction.removeFromParent(),
-                ])
+            let bodyPath = CGPath(
+                roundedRect: bodyRect,
+                cornerWidth: cornerRadius,
+                cornerHeight: cornerRadius,
+                transform: nil
             )
+            let bodyShape = SKShapeNode(path: bodyPath)
+            bodyShape.fillColor = SKColor(red: 1, green: 0.98, blue: 0.92, alpha: 0.95)
+            bodyShape.strokeColor = SKColor(red: 0.82, green: 0.72, blue: 0.55, alpha: 1)
+            bodyShape.lineWidth = 1.5
+            bubbleNode.addChild(bodyShape)
+
+            // --- Small triangle pointer ---
+            let triSize: CGFloat = tileSize * 0.18
+            let triPath = CGMutablePath()
+            triPath.move(to: CGPoint(x: -triSize, y: 0))
+            triPath.addLine(to: CGPoint(x: 0, y: -triSize))
+            triPath.addLine(to: CGPoint(x: triSize, y: 0))
+            triPath.closeSubpath()
+            let triShape = SKShapeNode(path: triPath)
+            triShape.fillColor = bodyShape.fillColor
+            triShape.strokeColor = bodyShape.strokeColor
+            triShape.lineWidth = 1.5
+            bubbleNode.addChild(triShape)
+
+            // --- Center label in bubble ---
+            label.position = CGPoint(x: 0, y: bubbleHeight / 2)
+            bubbleNode.addChild(label)
+
+            // --- Position bubble above cat ---
+            bubbleNode.position = CGPoint(x: 0, y: cat.size.height * 0.85)
+            cat.addChild(bubbleNode)
+
+            // --- Animate: pop-in → hold → fade-out ---
+            bubbleNode.setScale(0.3)
+            bubbleNode.alpha = 0
+            let popIn = SKAction.group([
+                SKAction.fadeIn(withDuration: 0.15),
+                SKAction.scale(to: 1.05, duration: 0.15),
+            ])
+            let settle = SKAction.scale(to: 1.0, duration: 0.08)
+            let hold = SKAction.wait(forDuration: 2.5)
+            let fadeOut = SKAction.group([
+                SKAction.fadeOut(withDuration: 0.5),
+                SKAction.moveBy(x: 0, y: tileSize * 0.3, duration: 0.5),
+            ])
+            bubbleNode.run(
+                SKAction.sequence([popIn, settle, hold, fadeOut, SKAction.removeFromParent()])
+            )
+        }
+
+        // MARK: - Auto-tip loop
+        private func scheduleAutoTipLoop() {
+            let key = CatWander.autoTipActionKey
+            removeAction(forKey: key)
+
+            let delay = SKAction.wait(
+                forDuration: TimeInterval.random(
+                    in: CatWander.autoTipMinInterval...CatWander.autoTipMaxInterval
+                )
+            )
+            let showTip = SKAction.run { [weak self] in
+                guard let self, !self.wanderCats.isEmpty, !self.isHungry else { return }
+                // Pick a random cat that doesn't already have a tip bubble
+                let candidates = self.wanderCats.filter {
+                    $0.childNode(withName: CatWander.tipBubbleKey) == nil
+                }
+                guard let cat = candidates.randomElement() else { return }
+                self.showWalkingTip(above: cat)
+            }
+            let reschedule = SKAction.run { [weak self] in
+                self?.scheduleAutoTipLoop()
+            }
+
+            run(SKAction.sequence([delay, showTip, reschedule]), withKey: key)
+        }
+
+        // MARK: - Hunger system
+        private func scheduleHungerTimer() {
+            let key = CatWander.hungerActionKey
+            removeAction(forKey: key)
+
+            let delay = SKAction.wait(
+                forDuration: TimeInterval.random(
+                    in: CatWander.hungerMinInterval...CatWander.hungerMaxInterval
+                )
+            )
+            let trigger = SKAction.run { [weak self] in
+                self?.triggerHunger()
+            }
+            run(SKAction.sequence([delay, trigger]), withKey: key)
+        }
+
+        private func triggerHunger() {
+            guard !isHungry, !wanderCats.isEmpty else {
+                scheduleHungerTimer()
+                return
+            }
+            isHungry = true
+
+            // Dừng wander + chuyển laying cho tất cả mèo
+            for cat in wanderCats {
+                let moveKey = CatWander.movementActionKey(for: cat)
+                let pauseKey = CatWander.tapPauseActionKey(for: cat)
+                cat.removeAction(forKey: moveKey)
+                cat.removeAction(forKey: pauseKey)
+                cat.runLayingAnimation()
+            }
+
+            // Hiện hunger bubble trên mèo đầu tiên
+            if let firstCat = wanderCats.first {
+                showHungerBubble(above: firstCat)
+            }
+
+            onHungerStateChanged?(true)
+        }
+
+        private func showHungerBubble(above cat: SKSpriteNode) {
+            cat.childNode(withName: CatWander.hungerBubbleKey)?.removeFromParent()
+
+            let tipText = "Mèo đói rồi! 🍽️\nMua thức ăn nhé!"
+
+            // --- Bubble container ---
+            let bubbleNode = SKNode()
+            bubbleNode.name = CatWander.hungerBubbleKey
+            bubbleNode.zPosition = cat.zPosition + 2
+
+            // --- Text label ---
+            let fontSize: CGFloat = max(14, tileSize * 0.32)
+            let label = SKLabelNode(fontNamed: GameTypography.skPixelFontName)
+            label.text = tipText
+            label.fontSize = fontSize
+            label.fontColor = SKColor(red: 0.55, green: 0.12, blue: 0.12, alpha: 1)
+            label.numberOfLines = 0
+            label.preferredMaxLayoutWidth = tileSize * 3.2
+            label.verticalAlignmentMode = .center
+            label.horizontalAlignmentMode = .center
+            label.lineBreakMode = .byWordWrapping
+
+            // --- Measure text for bubble size ---
+            let textFrame = label.frame
+            let paddingH: CGFloat = tileSize * 0.35
+            let paddingV: CGFloat = tileSize * 0.25
+            let bubbleWidth = max(textFrame.width + paddingH * 2, tileSize * 2.6)
+            let bubbleHeight = max(textFrame.height + paddingV * 2, tileSize * 0.9)
+            let cornerRadius: CGFloat = tileSize * 0.2
+
+            // --- Rounded-rect body (warm red tint) ---
+            let bodyRect = CGRect(
+                x: -bubbleWidth / 2,
+                y: 0,
+                width: bubbleWidth,
+                height: bubbleHeight
+            )
+            let bodyPath = CGPath(
+                roundedRect: bodyRect,
+                cornerWidth: cornerRadius,
+                cornerHeight: cornerRadius,
+                transform: nil
+            )
+            let bodyShape = SKShapeNode(path: bodyPath)
+            bodyShape.fillColor = SKColor(red: 1, green: 0.92, blue: 0.88, alpha: 0.95)
+            bodyShape.strokeColor = SKColor(red: 0.85, green: 0.35, blue: 0.25, alpha: 1)
+            bodyShape.lineWidth = 1.5
+            bubbleNode.addChild(bodyShape)
+
+            // --- Small triangle pointer ---
+            let triSize: CGFloat = tileSize * 0.18
+            let triPath = CGMutablePath()
+            triPath.move(to: CGPoint(x: -triSize, y: 0))
+            triPath.addLine(to: CGPoint(x: 0, y: -triSize))
+            triPath.addLine(to: CGPoint(x: triSize, y: 0))
+            triPath.closeSubpath()
+            let triShape = SKShapeNode(path: triPath)
+            triShape.fillColor = bodyShape.fillColor
+            triShape.strokeColor = bodyShape.strokeColor
+            triShape.lineWidth = 1.5
+            bubbleNode.addChild(triShape)
+
+            // --- Center label in bubble ---
+            label.position = CGPoint(x: 0, y: bubbleHeight / 2)
+            bubbleNode.addChild(label)
+
+            // --- Position bubble above cat ---
+            bubbleNode.position = CGPoint(x: 0, y: cat.size.height * 0.85)
+            cat.addChild(bubbleNode)
+
+            // --- Animate: pop-in + gentle pulse (stays visible) ---
+            bubbleNode.setScale(0.3)
+            bubbleNode.alpha = 0
+            let popIn = SKAction.group([
+                SKAction.fadeIn(withDuration: 0.15),
+                SKAction.scale(to: 1.05, duration: 0.15),
+            ])
+            let settle = SKAction.scale(to: 1.0, duration: 0.08)
+            let pulseUp = SKAction.scale(to: 1.04, duration: 0.8)
+            pulseUp.timingMode = .easeInEaseOut
+            let pulseDown = SKAction.scale(to: 0.97, duration: 0.8)
+            pulseDown.timingMode = .easeInEaseOut
+            let pulse = SKAction.repeatForever(SKAction.sequence([pulseUp, pulseDown]))
+            bubbleNode.run(SKAction.sequence([popIn, settle, pulse]))
+        }
+
+        /// Cho mèo ăn — gọi từ `GameViewController` khi người chơi mua thức ăn.
+        func feedCats() {
+            guard isHungry else { return }
+            isHungry = false
+
+            // Xóa hunger bubble + resume wander cho tất cả mèo
+            for cat in wanderCats {
+                cat.childNode(withName: CatWander.hungerBubbleKey)?.removeFromParent()
+                scheduleNextWanderStep(for: cat)
+            }
+
+            onHungerStateChanged?(false)
+            scheduleHungerTimer()
         }
     }
 
