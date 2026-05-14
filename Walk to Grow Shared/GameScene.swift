@@ -363,7 +363,7 @@ class GameScene: SKScene {
             let base = defaultSpawnPoint()
             let mapW = CGFloat(mapWidth) * tileSize
             let mapH = CGFloat(mapHeight) * tileSize
-            let margin = tileSize * 2
+            let margin = tileSize * 3.5
             guard index > 0 else {
                 return CGPoint(
                     x: min(max(base.x, margin), mapW - margin),
@@ -538,13 +538,12 @@ class GameScene: SKScene {
             let mapW = CGFloat(mapWidth) * tileSize
             let mapH = CGFloat(mapHeight) * tileSize
 
-            let halfW = cat.size.width * 0.5
-            let halfH = cat.size.height * 0.5
+            let wanderMargin = tileSize * 3.5
 
-            let minX = halfW
-            let maxX = mapW - halfW
-            let minY = halfH
-            let maxY = mapH - halfH
+            let minX = wanderMargin
+            let maxX = mapW - wanderMargin
+            let minY = wanderMargin
+            let maxY = mapH - wanderMargin
 
             let stepDistance =
                 tileSize
